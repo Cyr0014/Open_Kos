@@ -6,7 +6,6 @@ use App\Concerns\SerializesDatesWithTimezone;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'property_id',
@@ -50,10 +49,5 @@ class TenantAgreement extends Model
     public function manager(): BelongsTo
     {
         return $this->belongsTo(User::class, 'manager_id');
-    }
-
-    public function signatureDocument(): HasOne
-    {
-        return $this->hasOne(TenantDocument::class, 'tenant_id', 'tenant_id');
     }
 }

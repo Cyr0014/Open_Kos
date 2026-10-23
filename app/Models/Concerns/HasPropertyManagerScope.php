@@ -1,7 +1,10 @@
 <?php
 
-namespace App\Models;
+namespace App\Models\Concerns;
 
+use App\Models\Property;
+use App\Models\PropertyManagerAssignment;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
