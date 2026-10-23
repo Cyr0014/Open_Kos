@@ -258,6 +258,14 @@ class Property extends Model
     {
         return $this->belongsToMany(User::class)->withTimestamps();
     }
+     public function managers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'property_manager_assignments')
+            ->withPivot(['is_active', 'notes', 'assigned_by'])
+            ->withTimestamps();
+    }
+
+    
 
     public function leases(): HasMany
     {
@@ -323,6 +331,12 @@ class Property extends Model
             default => $query->whereRaw('1 = 0'),
         };
     }
+
+
+public function activeManagers(): BelongsToMany
+{
+    return $this->managers()->wherePivot('is_active', true);
+}
 
     public function scopeListSearch(Builder $query, string $search): void
     {
