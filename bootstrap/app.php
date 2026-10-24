@@ -3,8 +3,10 @@
 use App\Exceptions\MailDeliveryException;
 use App\Http\Middleware\EnsurePropertyRentalMode;
 use App\Http\Middleware\EnsureUserIsActive;
+use App\Http\Middleware\EnsureWebhookRequestIsSecure;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\ProductionSecurityHeaders;
 use App\Http\Middleware\SetApplicationLocale;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
@@ -28,6 +30,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $trustedProxies = trim((string) ($_ENV['TRUSTED_PROXIES'] ?? $_SERVER['TRUSTED_PROXIES'] ?? ''));
 
+        if ($trustedProxies === '' && app()->isProduction()) {
+            $trustedProxies = '*';
+        }
+
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
         $middleware->trustProxies(
             at: $trustedProxies === '*'
@@ -45,6 +51,11 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
             EnsureUserIsActive::class,
+            ProductionSecurityHeaders::class,
+        ]);
+
+        $middleware->api(append: [
+            ProductionSecurityHeaders::class,
         ]);
 
         $middleware->alias([
@@ -52,6 +63,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => PermissionMiddleware::class,
             'role_or_permission' => RoleOrPermissionMiddleware::class,
             'property-rental-mode' => EnsurePropertyRentalMode::class,
+            'webhook.secure' => EnsureWebhookRequestIsSecure::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
