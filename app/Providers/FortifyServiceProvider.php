@@ -22,9 +22,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class FortifyServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
         $this->app->singleton(LoginResponse::class, fn ($app) => new class($app->make(PostAuthenticationDestination::class)) implements LoginResponse
@@ -40,6 +37,7 @@ class FortifyServiceProvider extends ServiceProvider
                 return redirect()->to($this->destination->resolve($request, $request->user()));
             }
         });
+
         $this->app->singleton(RegisterResponse::class, fn ($app) => new class($app->make(PostAuthenticationDestination::class)) implements RegisterResponse
         {
             public function __construct(private PostAuthenticationDestination $destination) {}
@@ -51,9 +49,6 @@ class FortifyServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
         $this->configureActions();
@@ -61,9 +56,6 @@ class FortifyServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
     }
 
-    /**
-     * Configure Fortify actions.
-     */
     private function configureActions(): void
     {
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
@@ -80,9 +72,6 @@ class FortifyServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * Configure Fortify views.
-     */
     private function configureViews(): void
     {
         Fortify::loginView(fn (Request $request) => Inertia::render('auth/login', [
@@ -115,9 +104,6 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::confirmPasswordView(fn () => Inertia::render('auth/confirm-password'));
     }
 
-    /**
-     * Configure rate limiting.
-     */
     private function configureRateLimiting(): void
     {
         RateLimiter::for('two-factor', function (Request $request) {
@@ -126,6 +112,18 @@ class FortifyServiceProvider extends ServiceProvider
 
         RateLimiter::for('login', function (Request $request) {
             $throttleKey = Str::transliterate(Str::lower($request->input(Fortify::username())).'|'.$request->ip());
+
+            return Limit::perMinute(5)->by($throttleKey);
+        });
+
+        RateLimiter::for('register', function (Request $request) {
+            $throttleKey = Str::transliterate(Str::lower($request->ip() ?: 'unknown'));
+
+            return Limit::perMinute(10)->by($throttleKey);
+        });
+
+        RateLimiter::for('password-reset', function (Request $request) {
+            $throttleKey = Str::transliterate(Str::lower($request->ip() ?: 'unknown'));
 
             return Limit::perMinute(5)->by($throttleKey);
         });
