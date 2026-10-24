@@ -1,81 +1,90 @@
 <?php
 
-namespace App\Providers;
-
-use App\Contracts\DataTransfer\TabularReader;
-use App\Contracts\DataTransfer\TabularWriter;
-use App\Models\Setting;
-use App\Services\DataTransfer\CsvReader;
-use App\Services\DataTransfer\CsvWriter;
-use Carbon\CarbonImmutable;
-use DateTimeZone;
-use Illuminate\Auth\Events\Login;
+use App\Exceptions\MailDeliveryException;
+use App\Http\Middleware\EnsurePropertyRentalMode;
+use App\Http\Middleware\EnsureUserIsActive;
+use App\Http\Middleware\HandleAppearance;
+use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\ProductionSecurityHeaders;
+use App\Http\Middleware\SetApplicationLocale;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\Date;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Validation\Rules\Password;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Spatie\Permission\Middleware\PermissionMiddleware;
+use Spatie\Permission\Middleware\RoleMiddleware;
+use Spatie\Permission\Middleware\RoleOrPermissionMiddleware;
+use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 
-class AppServiceProvider extends ServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(TabularReader::class, CsvReader::class);
-        $this->app->bind(TabularWriter::class, CsvWriter::class);
-    }
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        api: __DIR__.'/../routes/api.php',
+        commands: __DIR__.'/../routes/console.php',
+        health: '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        $trustedProxies = trim((string) ($_ENV['TRUSTED_PROXIES'] ?? $_SERVER['TRUSTED_PROXIES'] ?? ''));
 
-    public function boot(): void
-    {
-        $this->configureDefaults();
-        $this->configureDisplayTimezone();
-        $this->configureAuthEvents();
-    }
-
-    protected function configureDisplayTimezone(): void
-    {
-        try {
-            $timezone = Setting::get('timezone');
-        } catch (QueryException) {
-            $timezone = null;
+        if ($trustedProxies === '' && app()->isProduction()) {
+            $trustedProxies = '*';
         }
 
-        if (! is_string($timezone) || $timezone === '') {
-            $timezone = 'UTC';
-        }
-
-        try {
-            new DateTimeZone($timezone);
-        } catch (\Exception) {
-            $timezone = 'UTC';
-        }
-
-        config(['app.display_timezone' => $timezone]);
-    }
-
-    protected function configureDefaults(): void
-    {
-        Date::use(CarbonImmutable::class);
-
-        DB::prohibitDestructiveCommands(
-            app()->isProduction(),
+        $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
+        $middleware->trustProxies(
+            at: $trustedProxies === '*'
+                ? '*'
+                : array_values(array_filter(array_map('trim', explode(',', $trustedProxies)))),
+            headers: Request::HEADER_X_FORWARDED_FOR |
+                Request::HEADER_X_FORWARDED_HOST |
+                Request::HEADER_X_FORWARDED_PORT |
+                Request::HEADER_X_FORWARDED_PROTO,
         );
 
-        Password::defaults(fn (): ?Password => app()->isProduction()
-            ? Password::min(12)
-                ->mixedCase()
-                ->letters()
-                ->numbers()
-                ->symbols()
-                ->uncompromised()
-            : null,
-        );
-    }
+        $middleware->web(append: [
+            HandleAppearance::class,
+            SetApplicationLocale::class,
+            HandleInertiaRequests::class,
+            AddLinkHeadersForPreloadedAssets::class,
+            EnsureUserIsActive::class,
+            ProductionSecurityHeaders::class,
+        ]);
 
-    protected function configureAuthEvents(): void
-    {
-        Event::listen(Login::class, function (Login $event): void {
-            $event->user->forceFill(['last_login_at' => now()])->save();
+        $middleware->api(append: [ProductionSecurityHeaders::class]);
+
+        $middleware->alias([
+            'role' => RoleMiddleware::class,
+            'permission' => PermissionMiddleware::class,
+            'role_or_permission' => RoleOrPermissionMiddleware::class,
+            'property-rental-mode' => EnsurePropertyRentalMode::class,
+        ]);
+    })
+    ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->render(function (MailDeliveryException|TransportExceptionInterface $exception, Request $request) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => __('Email could not be sent. Check your mail settings and try again.'),
+                ], 503);
+            }
+
+            Inertia::flash('toast', [
+                'type' => 'error',
+                'message' => __('Email could not be sent. Check your mail settings and try again.'),
+            ]);
+
+            return redirect()->back();
         });
-    }
-}
+
+        $exceptions->render(function (QueryException $e) {
+            if ($e->getCode() === '23503') {
+                if (request()->isMethod('delete')) {
+                    Inertia::flash('toast', ['type' => 'error', 'message' => __('This record cannot be deleted because other records depend on it.')]);
+                }
+
+                return redirect()->back();
+            }
+        });
+    })->create();

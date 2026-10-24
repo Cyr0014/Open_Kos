@@ -1,149 +1,97 @@
 <?php
 
-return [
+namespace App\Providers;
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application Name
-    |--------------------------------------------------------------------------
-    |
-    | This value is the name of your application, which will be used when the
-    | framework needs to place the application's name in a notification or
-    | other UI elements where an application name needs to be displayed.
-    |
-    */
+use App\Contracts\DataTransfer\TabularReader;
+use App\Contracts\DataTransfer\TabularWriter;
+use App\Models\Setting;
+use App\Services\DataTransfer\CsvReader;
+use App\Services\DataTransfer\CsvWriter;
+use Carbon\CarbonImmutable;
+use DateTimeZone;
+use Illuminate\Auth\Events\Login;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 
-    'name' => env('APP_NAME', 'Laravel'),
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(TabularReader::class, CsvReader::class);
+        $this->app->bind(TabularWriter::class, CsvWriter::class);
+    }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application Environment
-    |--------------------------------------------------------------------------
-    |
-    | This value determines the "environment" your application is currently
-    | running in. This may determine how you prefer to configure various
-    | services the application utilizes. Set this in your ".env" file.
-    |
-    */
+    public function boot(): void
+    {
+        $this->configureDefaults();
+        $this->configureDisplayTimezone();
+        $this->configureAuthEvents();
+        $this->configureRateLimiters();
+    }
 
-    'env' => env('APP_ENV', 'production'),
+    protected function configureDisplayTimezone(): void
+    {
+        try {
+            $timezone = Setting::get('timezone');
+        } catch (QueryException) {
+            $timezone = null;
+        }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application Debug Mode
-    |--------------------------------------------------------------------------
-    |
-    | When your application is in debug mode, detailed error messages with
-    | stack traces will be shown on every error that occurs within your
-    | application. If disabled, a simple generic error page is shown.
-    |
-    */
+        if (! is_string($timezone) || $timezone === '') {
+            $timezone = 'UTC';
+        }
 
-    'debug' => (bool) env('APP_DEBUG', false),
+        try {
+            new DateTimeZone($timezone);
+        } catch (\Exception) {
+            $timezone = 'UTC';
+        }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application URL
-    |--------------------------------------------------------------------------
-    |
-    | This URL is used by the console to properly generate URLs when using
-    | the Artisan command line tool. You should set this to the root of
-    | the application so that it's available within Artisan commands.
-    |
-    */
+        config(['app.display_timezone' => $timezone]);
+    }
 
-    'url' => env('APP_URL', 'http://localhost'),
+    protected function configureDefaults(): void
+    {
+        Date::use(CarbonImmutable::class);
 
-    'build' => [
-        'version' => env('OPENKOS_BUILD_VERSION'),
-        'channel' => env('OPENKOS_BUILD_CHANNEL'),
-        'commit_sha' => env('OPENKOS_BUILD_COMMIT_SHA'),
-    ],
+        DB::prohibitDestructiveCommands(
+            app()->isProduction(),
+        );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application Timezone
-    |--------------------------------------------------------------------------
-    |
-    | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
-    |
-    */
+        Password::defaults(fn (): ?Password => app()->isProduction()
+            ? Password::min(12)
+                ->mixedCase()
+                ->letters()
+                ->numbers()
+                ->symbols()
+                ->uncompromised()
+            : null,
+        );
+    }
 
-    'timezone' => 'UTC',
+    protected function configureAuthEvents(): void
+    {
+        Event::listen(Login::class, function (Login $event): void {
+            $event->user->forceFill(['last_login_at' => now()])->save();
+        });
+    }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Application Locale Configuration
-    |--------------------------------------------------------------------------
-    |
-    | The application locale determines the default locale that will be used
-    | by Laravel's translation / localization methods. This option can be
-    | set to any locale for which you plan to have translation strings.
-    |
-    */
+    protected function configureRateLimiters(): void
+    {
+        RateLimiter::for('auth', fn (Request $request) => Limit::perMinute(10)
+            ->by($request->ip() ?: 'unknown'));
 
-    'locale' => env('APP_LOCALE', 'en'),
+        RateLimiter::for('payment-webhook', fn (Request $request) => Limit::perMinute(20)
+            ->by($request->ip() ?: 'unknown'));
 
-    'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
-
-    'supported_locales' => [
-        'en' => 'English',
-        'id' => 'Bahasa Indonesia',
-    ],
-
-    'locale_aliases' => [
-        'en' => 'en',
-        'en-us' => 'en',
-        'id' => 'id',
-        'id-id' => 'id',
-    ],
-
-    'intl_locales' => [
-        'en' => 'en-US',
-        'id' => 'id-ID',
-    ],
-
-    'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Encryption Key
-    |--------------------------------------------------------------------------
-    |
-    | This key is utilized by Laravel's encryption services and should be set
-    | to a random, 32 character string to ensure that all encrypted values
-    | are secure. You should do this prior to deploying the application.
-    |
-    */
-
-    'cipher' => 'AES-256-CBC',
-
-    'key' => env('APP_KEY'),
-
-    'previous_keys' => [
-        ...array_filter(
-            explode(',', (string) env('APP_PREVIOUS_KEYS', '')),
-        ),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Maintenance Mode Driver
-    |--------------------------------------------------------------------------
-    |
-    | These configuration options determine the driver used to determine and
-    | manage Laravel's "maintenance mode" status. The "cache" driver will
-    | allow maintenance mode to be controlled across multiple machines.
-    |
-    | Supported drivers: "file", "cache"
-    |
-    */
-
-    'maintenance' => [
-        'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
-        'store' => env('APP_MAINTENANCE_STORE', 'database'),
-    ],
-
-];
+        RateLimiter::for('public-portal', fn (Request $request) => Limit::perMinute(60)
+            ->by($request->ip() ?: 'unknown'));
+    }
+}
